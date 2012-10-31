@@ -46,12 +46,21 @@ class Pullr
 
     base_url = "https://#{login}#{credentials}@api.github.com/"
     @urls = {
-            :issues => {:view => "#{base_url}repos/#{@target_tree}/#{@repo}/issues/#{@issue_number}",
-                        :comments => "#{base_url}repos/#{@target_tree}/#{@repo}/issues/#{@issue_number}/comments",
-                        :labels => "#{base_url}repos/#{@target_tree}/#{@repo}/issues/#{@issue_number}/labels",
-            },
-            :branches => {:list => "#{base_url}repos/#{@source_tree}/#{@repo}/branches"},
-            :pulls => {:create => "#{base_url}repos/#{@target_tree}/#{@repo}/pulls"},
+       :issues =>
+       {
+         :view => "#{base_url}repos/#{@target_tree}/#{@repo}/issues/#{@issue_number}",
+         :comments => "#{base_url}repos/#{@target_tree}/#{@repo}/issues/#{@issue_number}/comments",
+         :labels => "#{base_url}repos/#{@target_tree}/#{@repo}/issues/#{@issue_number}/labels",
+       },
+       :branches =>
+       {
+         :list => "#{base_url}repos/#{@source_tree}/#{@repo}/branches"
+       },
+       :pulls =>
+       {
+         :create => "#{base_url}repos/#{@target_tree}/#{@repo}/pulls",
+         :update => "#{base_url}repos/#{@target_tree}/#{@repo}/pull/#{@issue_number}",
+       },
     }
   end
 
@@ -122,7 +131,17 @@ class Pullr
 
       # create the pull request, linked to the issue
       params = {:base => @target_branch, :head => branch_to_pull, :issue => @issue_number}
+
+      # Check first of all to see if pull request already exisits
+      issue_info = do_api_call @urls[:issues][:view]
+
+      #if issue_info["pull_request"]["html_url"].nil?
+       # Create pull request
       do_api_call @urls[:pulls][:create], nil, params.to_json
+      #else
+      ## Update pull request
+      #do_api_call @urls[:pulls][:update], nil, params.to_json, {:put => true}
+      #end
 
       puts "\nCREATED PULL REQUEST!\n"
 
@@ -139,7 +158,6 @@ class Pullr
         }
         PullrMailer.deliver_notification(@email_options["from"], @email_options["to"], "PULLR - Pull Request Created for #{issue_title}", "Please review at https://github.com/#{@target_tree}/#{@repo}/pull/#{@issue_number}")
       end
-
     end
   end
 
@@ -171,7 +189,7 @@ class Pullr
 
   def find_branch
     all_branches = do_api_call(@urls[:branches][:list])
-    candidate_branches = all_branches.select{|branch| /^#{@issue_number}/ =~ branch["name"]}
+    candidate_branches = all_branches.select{|branch| /^(v2-)?#{@issue_number}/ =~ branch["name"]}
     raise "#{candidate_branches.count} branches found" unless candidate_branches.count == 1
     candidate_branches.first["name"]
   end
@@ -187,7 +205,11 @@ class Pullr
   def self.guess_issue_number
     # grab any integer appearing after a slash in the output of `git symbolic-ref HEAD`,
     # which should be something like "refs/heads/999-some-big-issue\n"
-    $1 if `git symbolic-ref HEAD 2> /dev/null` =~ /\/(\d+)/
+    if `git symbolic-ref HEAD 2> /dev/null` =~ /\/(\d+)/
+      $1
+    elsif `git symbolic-ref HEAD 2> /dev/null` =~ /\/(v2-)(\d+)/
+      $2
+    end
   end
 
   def self.get_yes_no_answer(prompt, default_is_yes = true)
@@ -221,4 +243,8 @@ begin
   Pullr.configure.do
 rescue => e
   puts "ERROR - #{e.message}"
+  response = JSON.parse(e.response)
+  puts "Error info - #{response['errors']}"
+  puts "Error message - #{response['message']}"
+  puts response
 end
